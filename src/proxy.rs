@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tracing::{error, info};
-use httparse::Request;
+use crate::inspect::inspect_and_modify;
 
 pub async fn run_proxy(listen_addr: &str, target_addr: &str) -> Result<()> {
     let listener = TcpListener::bind(listen_addr)
@@ -63,37 +63,11 @@ async fn handle_connection(mut client_stream: TcpStream, target_addr: &str) -> R
         Ok::<(), anyhow::Error>(())
     };
 
-    tokio::try_join!(client_to_server, server_to_client)?;
+    tokio::select! {
+        res = client_to_server => res,
+        res = server_to_client => res,
+    }?;
 
     info!("Connection closed");
     Ok(())
-}
-
-fn inspect_and_modify(data: &[u8]) -> Option<Vec<u8>> {
-    let mut headers = [httparse::EMPTY_HEADER; 64];
-    let mut req = Request::new(&mut headers);
-
-    match req.parse(data) {
-        Ok(httparse::Status::Complete(_)) => {
-            let method = req.method.unwrap_or("UNKNOWN");
-            let path = req.path.unwrap_or("UNKNOWN");
-            info!("HTTP Request: {} {}", method, path);
-
-            // Simple modification: Inject a header if it looks like an HTTP request
-            // Note: This is a naive implementation that assumes the entire header is in the first packet
-            let data_str = String::from_utf8_lossy(data);
-            if data_str.contains("\r\n\r\n") {
-                let modified = data_str.replace("\r\n\r\n", "\r\nX-Proxy-Handled: true\r\n\r\n");
-                return Some(modified.into_bytes());
-            }
-        }
-        Ok(httparse::Status::Partial) => {
-            // Partial header, could wait for more but for now just pass through
-        }
-        Err(_) => {
-            // Not HTTP or malformed, just pass through
-        }
-    }
-
-    None
 }

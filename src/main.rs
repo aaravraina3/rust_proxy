@@ -1,8 +1,7 @@
-mod proxy;
-
 use anyhow::Result;
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
+use rust_proxy::proxy;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
