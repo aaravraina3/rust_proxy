@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tracing::{error, info, warn};
+use tracing::{error, info};
 use httparse::Request;
 
 pub async fn run_proxy(listen_addr: &str, target_addr: &str) -> Result<()> {
@@ -83,7 +83,7 @@ fn inspect_and_modify(data: &[u8]) -> Option<Vec<u8>> {
             // Note: This is a naive implementation that assumes the entire header is in the first packet
             let data_str = String::from_utf8_lossy(data);
             if data_str.contains("\r\n\r\n") {
-                let mut modified = data_str.replace("\r\n\r\n", "\r\nX-Proxy-Handled: true\r\n\r\n");
+                let modified = data_str.replace("\r\n\r\n", "\r\nX-Proxy-Handled: true\r\n\r\n");
                 return Some(modified.into_bytes());
             }
         }
