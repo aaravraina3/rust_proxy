@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tracing::{error, info};
-use crate::inspect::inspect_and_modify;
+use crate::inspect::inspect;
 
 pub async fn run_proxy(listen_addr: &str, target_addr: &str) -> Result<()> {
     let listener = TcpListener::bind(listen_addr)
@@ -30,24 +30,26 @@ async fn handle_connection(mut client_stream: TcpStream, target_addr: &str) -> R
         .await
         .with_context(|| format!("Failed to connect to target {}", target_addr))?;
 
+    // Disable Nagle's algorithm on both legs: without this, small forwarded
+    // writes wait for delayed ACKs, adding tens of ms per request under load.
+    client_stream.set_nodelay(true)?;
+    server_stream.set_nodelay(true)?;
+
     let (mut client_recv, mut client_send) = client_stream.split();
     let (mut server_recv, mut server_send) = server_stream.split();
 
-    // Task for Client -> Server (with inspection and modification)
+    // Task for Client -> Server (zero-copy inspection, then forward as-is)
     let client_to_server = async {
         let mut buffer = [0u8; 8192];
         loop {
             let n = client_recv.read(&mut buffer).await?;
             if n == 0 { break; }
 
-            let mut data = buffer[..n].to_vec();
-            
-            // Inspect and Modify
-            if let Some(modified_data) = inspect_and_modify(&data) {
-                data = modified_data;
-            }
+            // Parse in place: httparse borrows from the buffer, no allocation.
+            inspect(&buffer[..n]);
 
-            server_send.write_all(&data).await?;
+            // Forward the original bytes; nothing is copied.
+            server_send.write_all(&buffer[..n]).await?;
         }
         Ok::<(), anyhow::Error>(())
     };
